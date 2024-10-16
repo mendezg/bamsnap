@@ -273,6 +273,11 @@ def get_out_file_metainfo(bam, pos1, opt, is_single_image_out):
 class BamSnapPlot():
     def __init__(self, opt):
         self.opt = opt
+        self.opt.setdefault('bgcolor', 'FFFFFF')
+        self.opt.setdefault('axiscolor', '000000')
+        self.opt.setdefault('title_color', '000000')
+        self.opt.setdefault('title_fontsize', 16)
+        self.opt.setdefault('title', '')
         self.font = {}
         self.drawplot = self.opt['draw']
         self.bamplot = self.opt['bamplot']
@@ -316,22 +321,23 @@ class BamSnapPlot():
         return outfile_metainfo['outfname']
 
     def get_title_image(self, title, w, fontsize):
-        margin = 10
-        font = self.get_font(fontsize, 'bold')
-        fontsize = font.getsize(title)
-        h = fontsize[1] + 3 + margin * 2
-        im = Image.new('RGB', (w, h), getrgb(self.opt['bgcolor']))
-        dr = ImageDraw.Draw(im)
+        font = self.get_font(fontsize)
+        # Update to use getbbox()
+        bbox = font.getbbox(title)
+        text_width = bbox[2] - bbox[0]
+        text_height = bbox[3] - bbox[1]
 
-        if self.opt['border']:
-            h1 = int(h/2)
-            dr.line([(0, h1), (w, h1)], fill=getrgb('000000'), width=1)
+        # Create an image with the appropriate height
+        ia_sub = Image.new('RGBA', (w, text_height + 10), getrgb(self.opt['bgcolor']))
+        drawA = ImageDraw.Draw(ia_sub)
+        xi = int((w - text_width) / 2)
+        yi = 5  # Adjust as needed
 
-        # dr.rectangle([(margin, margin - 1 ),(margin * 3 + fontsize[0], margin + fontsize[1] + 1)], fill=(255,255,255,255), outline=(120,120,120,255))
-        dr.rectangle([(margin, margin - 1), (margin * 3 + fontsize[0], margin + fontsize[1] + 1)],
-                     fill=(255, 255, 255, 255), outline=(255, 255, 255, 255))
-        dr.text((margin * 2, margin), title, font=font, fill=COLOR['LABEL'])
-        return im, h
+        # Draw the title text
+        drawA.text((xi, yi), title, font=font, fill=getrgb(self.opt['title_color']))
+
+        return ia_sub, text_height + 10  # Return the image and its height
+
 
     def append_image(self, ia, ia_sub):
         offset_top = ia.height
@@ -583,15 +589,21 @@ class ReferenceSequence():
         return refseq
 
     def get_refseq_from_localfasta(self, pos1):
-        spos = pos1['g_spos']-self.opt['margin'] - 500
-        epos = pos1['g_epos']+self.opt['margin'] + 1 + 500
+        # Get chromosome length
+        chrom_len = len(self.fasta[pos1['chrom']])
+        
+        # Calculate start and end positions with margins
+        margin = self.opt['margin'] + 500
+        spos = max(0, pos1['g_spos'] - margin)
+        epos = min(chrom_len, pos1['g_epos'] + margin + 1)
+        
+        # Fetch the sequence
         seq = self.get_refseq_from_fasta(pos1['chrom'], spos, epos, self.opt['ref_index_rebuild'])
-        i = 0
         refseq = {}
-        for gpos in range(spos, epos):
-            refseq[gpos+1] = seq[i]
-            i += 1
+        for i, gpos in enumerate(range(spos, epos)):
+            refseq[gpos + 1] = seq[i]
         return refseq
+
 
     def get_refseq_from_fasta(self, chrom, spos, epos, rebuild_index=False):
         f = self.fasta

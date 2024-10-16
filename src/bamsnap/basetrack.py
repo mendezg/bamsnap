@@ -37,6 +37,8 @@ class BaseTrack():
         vcls = ""
         for i in range(self.g_len):
             posi = self.spos + i
+            if posi not in self.refseq:
+                continue  # Skip positions outside refseq
             base = self.refseq[posi]
             # x1 = int(i * self.scale_x) + int(self.scale_x/2) - int(fontsize[0]/2)
             x1 = self.xscale.xmap[posi]['spos']
@@ -66,7 +68,8 @@ class BaseTrack():
 
 
     def set_height(self):
-        self.fontsize = self.font.getsize('C')
+        bbox = self.font.getbbox('C')
+        self.fontsize = (bbox[2] - bbox[0], bbox[3] - bbox[1])
         self.h = self.fontsize[1] + 2
 
 

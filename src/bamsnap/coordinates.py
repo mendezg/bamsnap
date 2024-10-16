@@ -35,13 +35,16 @@ class COORDINATES():
         self.font = ImageFont.truetype(getTemplatePath('VeraMono.ttf'), font_size)
 
     def resize_height(self):
-        self.single_font_size = self.font.getsize('C')
+        bbox = self.font.getbbox('C')
+        self.single_font_size = (bbox[2] - bbox[0], bbox[3] - bbox[1])
+
         if self.axisloc == "middle":
             self.h = max(self.h, self.single_font_size[1] + self.MIN_BAR_SIZE * 2)
             self.bar_size = int((self.h - self.single_font_size[1]) / 2) - self.GAP_LABEL_AND_BAR * 2
         else:
             self.h = max(self.h, self.single_font_size[1] + self.MIN_BAR_SIZE)
             self.bar_size = self.h - self.single_font_size[1] - self.GAP_LABEL_AND_BAR
+
 
     def cal_axis(self):
         min_base_number = int(self.MIN_AXIS_LABEL_WIDTH / (self.w/self.glen))

@@ -85,7 +85,8 @@ class CoveragePlot():
         # dr.line([(x1, 0), (x1+3, 0)], fill=getrgb(self.axis_color), width=1)
         # dr.line([(x1, int(h/2)), (x1+3, int(h/2))], fill=getrgb(self.axis_color), width=1)
         txt = "[0-" + str(max_cov) + "]"
-        fontsize = self.font.getsize(txt)
+        bbox = self.font.getbbox('C')
+        fontsize = (bbox[2] - bbox[0], bbox[3] - bbox[1])
         x1 = w - fontsize[0] - 5
         dr.text( (x1, 0), txt, font=self.font, fill=getrgb(self.axis_color))
         # dr.text( (x1+3, int(h/2-fontsize[1]/2)), str(int(max_cov/2)), font=self.font, fill=getrgb(self.axis_color))
@@ -297,7 +298,14 @@ class DrawReadSet():
         for group in group_list:
             self.max_cov[group] = 0
 
-        for a in self.samAlign.fetch(self.chrom, self.g_spos-self.read_gap_w-500, self.g_epos+500):
+        # Get chromosome length
+        chrom_len = self.samAlign.get_reference_length(self.chrom)
+
+        # Calculate start and end positions with margins
+        start_pos = max(0, self.g_spos - self.read_gap_w - 500)
+        end_pos = min(chrom_len, self.g_epos + 500)
+
+        for a in self.samAlign.fetch(self.chrom, start_pos, end_pos):
             if len(a.positions) > 0:
                 rid = self.get_rid(a)
                 self.update_ref_seq_with_read(a)
