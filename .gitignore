@@ -12,3 +12,4 @@ _build/
 tests/*.log
 tests/out/*.log
 test.sh
+*.egg-info/
