@@ -12,7 +12,8 @@ from .scale import Xscale
 from .bam import BAM
 from .util import get_url, getTemplatePath, fileOpen, fileSave, check_dir, getrgb, get_scale, is_exist, renderTemplate
 from .conf import COLOR, IMAGE_MARGIN_BOTTOM
-
+import textwrap
+from .util import getrgb
 
 class BamSnap():
 
@@ -322,21 +323,50 @@ class BamSnapPlot():
 
     def get_title_image(self, title, w, fontsize):
         font = self.get_font(fontsize)
-        # Update to use getbbox()
-        bbox = font.getbbox(title)
-        text_width = bbox[2] - bbox[0]
-        text_height = bbox[3] - bbox[1]
+        max_text_width = w - 20  # Adjust for margins (10 pixels on each side)
+
+        # Estimate average character width using getbbox()
+        bbox = font.getbbox('A')
+        avg_char_width = bbox[2] - bbox[0]
+
+        # Calculate maximum number of characters per line
+        max_chars_per_line = max_text_width // avg_char_width
+
+        # Handle cases where max_chars_per_line is too small
+        if max_chars_per_line < 1:
+            max_chars_per_line = 1
+
+        # Wrap the title into multiple lines
+        lines = textwrap.wrap(title, width=int(max_chars_per_line), break_long_words=True)
+
+        # Calculate the height needed for the wrapped text
+        line_height = bbox[3] - bbox[1]
+        padding_between_lines = 5  # Add extra padding between lines
+        image_height = (line_height + padding_between_lines) * len(lines) + 10  # Add padding
 
         # Create an image with the appropriate height
-        ia_sub = Image.new('RGBA', (w, text_height + 10), getrgb(self.opt['bgcolor']))
+        ia_sub = Image.new(
+            'RGBA',
+            (w, int(image_height)),
+            getrgb(self.opt.get('bgcolor', 'FFFFFF'))
+        )
         drawA = ImageDraw.Draw(ia_sub)
-        xi = int((w - text_width) / 2)
-        yi = 5  # Adjust as needed
 
-        # Draw the title text
-        drawA.text((xi, yi), title, font=font, fill=getrgb(self.opt['title_color']))
+        # Draw each line of text
+        y_text = 5  # Starting y position with top padding
+        for line in lines:
+            line_bbox = font.getbbox(line)
+            text_width = line_bbox[2] - line_bbox[0]
+            x_text = (w - text_width) / 2  # Center the text horizontally
+            drawA.text(
+                (x_text, y_text),
+                line,
+                font=font,
+                fill=getrgb(self.opt.get('title_color', '000000'))
+            )
+            y_text += line_height + padding_between_lines  # Move to the next line with extra spacing
 
-        return ia_sub, text_height + 10  # Return the image and its height
+        return ia_sub, int(image_height)
 
 
     def append_image(self, ia, ia_sub):
