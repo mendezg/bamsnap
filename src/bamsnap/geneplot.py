@@ -1,62 +1,51 @@
-from PIL import ImageFont, Image, ImageDraw
+from PIL import ImageFont, Image, ImageDraw, ImageOps
 from .conf import COLOR, GENE_ANNOT_FILE, REFER_SEQ_VERSION
 from .util import getTemplatePath, getDataPath, comma, gzopen, decodeb, convert_int_list, getrgb, get_scale
 import tabix
 
-LINETYPE = []
-LINETYPE.append('exon')
-LINETYPE.append('CDS')
-LINETYPE.append('start_codon')
-LINETYPE.append('stop_codon')
-LINETYPE.append('five_prime_utr')
-LINETYPE.append('three_prime_utr')
-LINETYPE.append('Selenocysteine')
+LINETYPE = [
+    'exon',
+    'CDS',
+    'start_codon',
+    'stop_codon',
+    'five_prime_utr',
+    'three_prime_utr',
+    'Selenocysteine'
+]
 
 class GeneAnnot():
     def __init__(self, rec, header):
         self.data = {}
         for i in range(len(header)):
-            self.data[header[i]] = rec[i]
+            self.data[header[i]] = rec[i] if i < len(rec) else ''
 
-        self.chrom = rec[header.index('CHROM')]
-        self.spos = int(rec[header.index('SPOS')])
-        self.epos = int(rec[header.index('EPOS')])
-        self.strand = rec[header.index('strand')]
-        self.is_negative = True
-        if self.strand == "+":
-            self.is_negative = False
-        self.gene_id = rec[header.index('gene_id')]
-        self.gene_name = rec[header.index('gene_name')]
-        self.gene_biotype = rec[header.index('gene_biotype')]
+        self.chrom = self.data.get('CHROM')
+        self.spos = int(self.data.get('SPOS')) + 1  # Convert 0-based to 1-based
+        self.epos = int(self.data.get('EPOS'))
+        self.strand = self.data.get('STRAND', '+')  # Default to '+'
+        self.is_negative = self.strand == '-'
+        self.gene_id = self.data.get('NAME', 'Gene')
+        self.gene_name = self.gene_id
+        self.gene_biotype = 'gene'
         self.transcripts = []
         self.visible_transcripts = []
         self.load_transcript()
-
-    def __str__(self):
-        return self.gene_name + "("+ self.gene_id +")"
+        self.level = None
 
     def load_transcript(self):
-        transcript_id_list = self.data['transcript_id'].split('|')
-        transcript_biotype_list = self.data['transcript_biotype'].split('|')
-        transcript_spos_list = self.data['transcript_spos'].split('|')
-        transcript_epos_list = self.data['transcript_epos'].split('|')
-        ltype_list = {}
-        for ltype in LINETYPE:
-            ltype_list[ltype+'_spos'] = self.data[ltype+'_spos'].split('|')
-            ltype_list[ltype+'_epos'] = self.data[ltype+'_epos'].split('|')
-        for i, tid in enumerate(transcript_id_list):
-            t1 = TranscriptAnnot(tid, transcript_biotype_list[i], transcript_spos_list[i], transcript_epos_list[i])
-            for ltype in LINETYPE:
-                t1.subregion[ltype+'_spos'] = ltype_list[ltype+'_spos'][i].split(',')
-                t1.subregion[ltype+'_epos'] = ltype_list[ltype+'_epos'][i].split(',')
-            t1.set_subregion()
-            self.transcripts.append(t1)
+        # Treat the gene as a single transcript for BED files
+        t1 = TranscriptAnnot(self.gene_id, self.gene_biotype, self.spos, self.epos)
+        t1.subregion['exon_spos'] = [self.spos]
+        t1.subregion['exon_epos'] = [self.epos]
+        self.transcripts.append(t1)
 
-    def set_visible_transcript(self, spos, epos):
-        for t1 in self.transcripts:
-            if t1.epos >= spos and t1.spos <= epos:
-                self.visible_transcripts.append(t1)
-        
+    def set_visible_transcript(self, region_spos, region_epos):
+        # Determine if the transcript overlaps with the region of interest
+        self.visible_transcripts = []
+        for transcript in self.transcripts:
+            if transcript.epos >= region_spos and transcript.spos <= region_epos:
+                self.visible_transcripts.append(transcript)
+
 
 class TranscriptAnnot():
     def __init__(self, tid, biotype, spos, epos):
@@ -66,133 +55,167 @@ class TranscriptAnnot():
         self.spos = int(spos)
         self.epos = int(epos)
 
-    def __str__(self):
-        return self.transcript_id
-
     def set_subregion(self):
-        for ltype in LINETYPE:
-            self.subregion[ltype+'_spos'] = convert_int_list(self.subregion[ltype+'_spos'])
-            self.subregion[ltype+'_epos'] = convert_int_list(self.subregion[ltype+'_epos'])
+        # For BED data, subregions are already set
+        pass
 
 
 class GenePlot():
-    def __init__(self, chrom, spos, epos, xscale, w, refversion="hg38", show_transcript = True):
+    def __init__(self, chrom, spos, epos, xscale, w, refversion="hg38", show_transcript=True, gene_annot_file=None, opt={}):
         self.chrom = chrom
         self.nchrom = chrom.replace('chr', '')
-        self.spos = spos
-        self.epos = epos
+        self.spos = max(spos, 1)  # Ensure spos is at least 1
+        self.epos = max(epos, self.spos)  # Ensure epos >= spos
         self.g_len = self.epos - self.spos + 1
-        self.font = None
-        self.gene_annot_file = getDataPath(GENE_ANNOT_FILE.replace("#REFSEQVERSION#", REFER_SEQ_VERSION[refversion]))
-        self.gene_annot_tb = tabix.open(self.gene_annot_file)
-        self.gene_annot_header = []
-        self.gene_annot = []
+        self.fontsize = opt.get('gene_fontsize', 10)
+        self.font = ImageFont.truetype(getTemplatePath('VeraMono.ttf'), self.fontsize)
         self.show_transcript = show_transcript
         self.w = w
         self.h = 0
         self.im = None
         self.bgcolor = "FFFFFF"
         self.noline = 0
-        self.margin = 5
-        self.lineheight = 10
-        self.gene_pos_color = "ffac9c"
-        self.gene_neg_color = "A19Cff"
+        self.margin = opt.get('gene_margin', 5)
+        self.lineheight = opt.get('gene_lineheight', 2)  # Adjust as needed
+        self.gene_pos_color = opt.get('gene_pos_color', "ffac9c")
+        self.gene_neg_color = opt.get('gene_neg_color', "A19Cff")
         self.xscale = xscale
+        self.opt = opt  # Store options
+
+        # Use the provided gene annotation file if specified
+        if gene_annot_file:
+            self.gene_annot_file = gene_annot_file
+        else:
+            self.gene_annot_file = getDataPath(GENE_ANNOT_FILE.replace("#REFSEQVERSION#", REFER_SEQ_VERSION[refversion]))
+
+        self.gene_annot_tb = tabix.open(self.gene_annot_file)
+        self.gene_annot_header = []
+        self.gene_annot = []
+
         self.load_gene_structure()
 
+    def assign_levels(self):
+        levels = []  # List of lists, where each sublist represents a level with genes
+
+        # Sort genes by start position
+        sorted_genes = sorted(self.gene_annot, key=lambda ga: ga.spos)
+
+        for ga in sorted_genes:
+            placed = False
+            for level_index, level in enumerate(levels):
+                # Check if the gene overlaps with any gene in the current level
+                overlap = False
+                for other_ga in level:
+                    if self.genes_overlap(ga, other_ga):
+                        overlap = True
+                        break
+                if not overlap:
+                    # Place gene in this level
+                    level.append(ga)
+                    ga.level = level_index
+                    placed = True
+                    break
+            if not placed:
+                # Create a new level
+                levels.append([ga])
+                ga.level = len(levels) - 1
+
+        self.total_levels = len(levels)
+        self.noline = self.total_levels
+
+    def genes_overlap(self, ga1, ga2):
+        # Returns True if ga1 and ga2 overlap in genomic positions
+        return not (ga1.epos <= ga2.spos or ga2.epos <= ga1.spos)
+
     def load_gene_structure(self):
-        if len(self.gene_annot_header) == 0:
+        if not self.gene_annot_header:
             for line in gzopen(self.gene_annot_file):
                 line = decodeb(line)
-                if line[0] == "#":
-                    self.gene_annot_header = line[1:].split('\t')
-                    self.gene_annot_header[-1] = self.gene_annot_header[-1].strip()
+                if line.startswith("#"):
+                    self.gene_annot_header = line[1:].strip().split('\t')
                     break
-        pos_str = self.nchrom + ':' + str(self.spos) + '-' + str(self.epos)
+            else:
+                # No header found; set default BED header
+                self.gene_annot_header = ['CHROM', 'SPOS', 'EPOS', 'NAME']
 
+        # Adjust positions to be within valid ranges
+        spos = max(self.spos, 1)
+        epos = max(self.epos, spos)  # Ensure epos >= spos
+
+        pos_str = f"{self.chrom}:{spos}-{epos}"
         self.gene_annot = []
-        for rec in self.gene_annot_tb.querys(pos_str):
-            ga = GeneAnnot(rec, self.gene_annot_header)
-            ga.set_visible_transcript(self.spos, self.epos)
-            self.gene_annot.append(ga)
-            self.noline += len(ga.visible_transcripts)
-            # self.noline += len(ga.transccripts)
-        
+        try:
+            genes_found = 0
+            for rec in self.gene_annot_tb.querys(pos_str):
+                genes_found += 1
+                ga = GeneAnnot(rec, self.gene_annot_header)
+                ga.set_visible_transcript(self.spos, self.epos)
+                self.gene_annot.append(ga)
+            print(f"Number of genes found in region {pos_str}: {genes_found}")
+        except tabix.TabixError:
+            # Handle cases where no annotations are found for the region
+            print(f"No genes found in region {pos_str}")
+
+        # Assign levels after loading all genes
+        self.assign_levels()
 
     def draw(self, dr):
-        y = self.h - 1
-        x1 = 0
-        x2 = self.w
+        # Calculate per-level height
+        per_level_height = self.margin + (self.font.getbbox('C')[3] - self.font.getbbox('C')[1]) + self.margin + self.lineheight + self.margin
 
-        yi = 0
-        fontsize = self.font.getsize('C')
         for ga in self.gene_annot:
-            # x1 = int((ga.spos - self.spos) * self.scale_x)
-            # x2 = int((ga.epos - self.spos) * self.scale_x)
-            # if x1 < 0:
-            #     x1 = 0
-            # if x2 > panel_xy[1][0]:
-            #     x2 = panel_xy[1][0]
-            # col1 = COLOR['GENE_NEG'] if ga.is_negative else COLOR['GENE_POS']
-            # dr.line([(x1, yi), (x2, yi)], fill=col1, width=2)
-            # x = int((min(ga.epos, self.epos) - max(ga.spos, self.spos)) / 2) * self.scale_x
-            # dr.text(( x - 50 , yi-15), ga.gene_name, font=self.font, fill=COLOR['COORDINATE'])
+            level = ga.level
+            yi = level * per_level_height
 
-            # for t1 in ga.transcripts:
+            yi += self.margin  # Add top margin within the level
+
             for t1 in ga.visible_transcripts:
-                # yi += 30
-                # yi += margin + fontsize[1] + lineheight
-                yi += self.margin
+                # Construct the text label conditionally
+                if t1.transcript_id != ga.gene_name:
+                    txt = f"{ga.gene_name} ({t1.transcript_id})"
+                else:
+                    txt = ga.gene_name
 
-                # x = int((min(ga.epos, self.epos) - max(ga.spos, self.spos)) / 2) * self.xscale.scale_x
-                x = self.xscale.get_x( (min(t1.epos, self.epos) + max(t1.spos, self.spos))/2 )['cpos']
-                
-                txt = ga.gene_name + " ("  + t1.transcript_id + ")"
-                x1 = min(max (x - int((len(txt) * fontsize[0])/2) , 0), self.w-len(txt) * fontsize[0])
-                dr.text( (x1, yi), txt, font=self.font, fill=COLOR['COORDINATE'])
+                # Draw the text label
+                x_center = self.xscale.get_x((t1.spos + t1.epos) / 2)['cpos']
+                text_width = self.font.getlength(txt)
+                x_text = min(max(x_center - text_width / 2, 0), self.w - text_width)
+                dr.text((x_text, yi), txt, font=self.font, fill=COLOR['COORDINATE'])
 
-                yi += fontsize[1] + int(self.lineheight/2)
-                col1 = getrgb(self.gene_neg_color, whitening=50) if ga.is_negative else getrgb(self.gene_pos_color, whitening=50)
-                for i, s1 in enumerate(t1.subregion['exon_spos']):
-                    x1 = max(self.xscale.get_x(t1.subregion['exon_spos'][i])['spos'], 0)
-                    x2 = max(min(self.xscale.get_x(t1.subregion['exon_epos'][i])['epos'], self.w), 0)
-                    if x1 > 0 or x2 > 0:
-                        dr.line([(x1, yi), (x2, yi)], fill=col1, width=self.lineheight)
+                yi += (self.font.getbbox('C')[3] - self.font.getbbox('C')[1]) + self.margin  # Move yi below the text label
 
-                x1 = self.xscale.get_x(t1.spos)['spos']
-                x2 = self.xscale.get_x(t1.epos)['epos']
-                if x1 < 0:
-                    x1 = 0
-                if x2 > self.w:
-                    x2 = self.w
-
+                # Draw the gene line below the text
+                x1_line = max(self.xscale.get_x(t1.spos)['spos'], 0)
+                x2_line = min(self.xscale.get_x(t1.epos)['epos'], self.w)
                 col1 = getrgb(self.gene_neg_color) if ga.is_negative else getrgb(self.gene_pos_color)
-                dr.line([(x1, yi), (x2, yi)], fill=col1, width=2)
-                
-                xi = 10
-                d = 3
-                for i in range(100):
-                    xi = i * 60 + 20
-                    if xi > x2:
-                        break
-                    if xi >= x1:
-                        if ga.is_negative:
-                            dr.polygon([(xi, yi), (xi + d, yi + d), (xi + d, yi - d)], fill=col1)
-                        else:
-                            dr.polygon([(xi, yi), (xi - d, yi + d), (xi - d, yi - d)], fill=col1)
-                        
-                yi += int(self.lineheight/2)
-    
+                dr.line([(x1_line, yi), (x2_line, yi)], fill=col1, width=self.lineheight)
+
+                # Optionally, draw arrows to indicate strand direction
+                if self.show_transcript:
+                    arrow_size = 5
+                    if ga.is_negative:
+                        dr.polygon([
+                            (x2_line, yi),
+                            (x2_line - arrow_size, yi - arrow_size),
+                            (x2_line - arrow_size, yi + arrow_size)
+                        ], fill=col1)
+                    else:
+                        dr.polygon([
+                            (x1_line, yi),
+                            (x1_line + arrow_size, yi - arrow_size),
+                            (x1_line + arrow_size, yi + arrow_size)
+                        ], fill=col1)
+
+
     def get_image(self):
         if self.im is None:
-            # if self.font is None:
-            #     self.set_font()
-            fontsize = self.font.getsize('C')
-            self.h = self.noline * (self.margin + fontsize[1] + self.lineheight)
+            # Calculate the image height based on the number of levels
+            text_bbox = self.font.getbbox('C')
+            text_height = text_bbox[3] - text_bbox[1]
+            per_level_height = self.margin + text_height + self.margin + self.lineheight + self.margin
+            self.h = int(self.total_levels * per_level_height)
 
             self.im = Image.new('RGBA', (self.w, self.h), getrgb(self.bgcolor))
             dr = ImageDraw.Draw(self.im)
             self.draw(dr)
-            
-        return self.im        
-            
+        return self.im

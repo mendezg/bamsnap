@@ -468,8 +468,13 @@ class BamSnapPlot():
         return ia
 
     def append_geneplot_image(self, ia, pos1, image_w, xscale):
-        geneplot = GenePlot(pos1['chrom'], pos1['g_spos'], pos1['g_epos'], xscale,
-                            image_w, self.opt['refversion'], show_transcript=True)
+        geneplot = GenePlot(
+            pos1['chrom'], pos1['g_spos'], pos1['g_epos'], xscale,
+            w=image_w,
+            refversion=self.opt.get('refversion', 'hg38'),
+            show_transcript=self.opt.get('show_transcript', True),
+            gene_annot_file=self.opt.get('gene_annot')  # Pass the custom gene annotation file
+        )
         geneplot.font = self.get_font(self.opt['gene_fontsize'])
         geneplot.gene_pos_color = self.opt['gene_pos_color']
         geneplot.gene_neg_color = self.opt['gene_neg_color']
